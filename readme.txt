@@ -1,5 +1,5 @@
 This folder provides the neural-based LoRa demodulation code for our ICLR 2023 workshop paper: NELORA-BENCH: A BENCHMARK FOR NEURAL ENHANCED LORA DEMODULATION
-
+If the dataset and checkpoint are not downloadable due to git LFS bandwidth usage, they can be accessed at https://drive.google.com/drive/folders/12o3kqfBGrWG2YWegBa-sqErpAUsmLIOO
 usage:
 1. unzip dataset.zip into a certain location(e.g. /path/to/dataset/, containing 2 folders, /path/to/dataset/train and /path/to/dataset/test);
 2. put the checkpoint files (70000_C_XtoY.pkl, 70000_maskCNN.pkl) at a certain location(e.g. /path/to/checkpoint_SF8/)
@@ -36,3 +36,5 @@ REACHED 0.85 ACC, TERMINATINg...
 
 4. run the baseline method (the dechirp method):
 python3 main_baseline.py --snr -18 --sf 8 --data_dir /path/to/dataset/test/8 --rep 1
+
+For any questions welcome to contact dujluo@gmail.com
