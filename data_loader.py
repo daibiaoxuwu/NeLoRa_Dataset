@@ -5,7 +5,6 @@ import torch
 from torch.utils.data import DataLoader 
 from torch.utils import data 
 from utils import *
-import cv2 
 import math 
 from scipy.signal import chirp
 from scipy.ndimage.filters import uniform_filter1d 
@@ -97,10 +96,10 @@ def lora_loader(opts):
 
     #read filelist
     files = dict(zip(list(range(opts.n_classes)), [[] for i in range(opts.n_classes)])) 
-    for subfolder in os.listdir(opts.data_dir):
-        for filename in os.listdir(os.path.join(opts.data_dir, subfolder)):
-            symbol_idx = int(filename.split('_')[1]) % opts.n_classes 
-            files[symbol_idx].append(os.path.join(opts.data_dir, subfolder, filename))
+    pathfiles = [(filename, os.path.join(root, filename)) for root, dirs, files in os.walk(opts.data_dir) for filename in files if filename[-4:] == '.mat']
+    for filename, pathfile in pathfiles:
+        symbol_idx = int(filename.split('_')[1]) % opts.n_classes 
+        files[symbol_idx].append(pathfile)
 
     #split 8:2
     for i in files.keys(): 

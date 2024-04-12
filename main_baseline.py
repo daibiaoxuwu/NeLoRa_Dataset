@@ -13,10 +13,10 @@ import pickle
 
 def create_parser(): 
     parser = argparse.ArgumentParser() 
-    parser.add_argument('--sf', type=int, default=-1, help='The spreading factor.') 
+    parser.add_argument('--sf', type=int, help='The spreading factor.') 
     parser.add_argument('--bw', type=int, default=125000, help='The bandwidth.') 
     parser.add_argument('--fs', type=int, default=1000000, help='The sampling rate.') 
-    parser.add_argument('--data_dir', type=str, default='', help='Choose the root path to rf signals.') 
+    parser.add_argument('--data_dir', type=str, help='Choose the root path to rf signals.') 
     parser.add_argument('--snr', type=float, default=-15, help='Choose the SNR of rf signals.') 
     parser.add_argument('--rep', type=int, default=1, help='repitition on each symbol') 
     parser.add_argument('--debug_upsampling', type=int, default=100, help='upsampling factor of FFT process') 
@@ -26,6 +26,7 @@ def create_parser():
 if __name__ == '__main__':  
     parser = create_parser()
     opts = parser.parse_args()
+    assert os.path.exists(opts.data_dir), 'data directory not found'
     opts.n_classes = 2 ** opts.sf
     nsamp = opts.fs * opts.n_classes // opts.bw
     t = np.linspace(0, nsamp / opts.fs, nsamp) 
@@ -39,10 +40,10 @@ if __name__ == '__main__':
     t0 = time.time()
     tstep = 0
     files = []
-    for subfolder in tqdm(os.listdir(opts.data_dir)):
-        d = os.path.join(opts.data_dir, subfolder)
-        for filename in os.listdir(d):
-            filepath = os.path.join(d, filename)
+
+    pathfiles = [(filename, os.path.join(root, filename)) for root, dirs, files in os.walk(opts.data_dir) for filename in files if filename[-4:] == '.mat' and os.path.basename(os.path.normpath(root)) != 'raw']
+    pbar = tqdm(pathfiles)
+    for filename, filepath in pbar:
             symbol_idx = int(filename.split('_')[1]) % opts.n_classes
 
             fid = open(filepath, 'rb') 
@@ -82,4 +83,5 @@ if __name__ == '__main__':
                 symbol_est = round(np.argmax(abs(fft_raw))/opts.debug_upsampling)%opts.n_classes
                 if symbol_est == symbol_idx: ACC[symbol_idx] += 1
                 SUM[symbol_idx] += 1
+                pbar.set_description(str(np.mean(ACC[SUM>0]/SUM[SUM>0])))
     print('\rSNR:', opts.snr, 'ACC:', str(np.mean(ACC[SUM>0]/SUM[SUM>0])))
