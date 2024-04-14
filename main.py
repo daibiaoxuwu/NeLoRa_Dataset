@@ -43,7 +43,7 @@ def load_checkpoint(opts, maskCNNModel, classificationHybridModel):
 
 
 def main(opts,models):
-    torch.cuda.empty_cache()
+    if torch.cuda.is_available(): torch.cuda.empty_cache()
 
     # Create train and test dataloaders for images from the two domains X and Y
     training_dataloader, testing_dataloader = data_loader.lora_loader(opts)
@@ -64,9 +64,7 @@ if __name__ == "__main__":
     parser = config.create_parser()
     opts = parser.parse_args()
 
-    if opts.sf == -1:
-        opts.sf = int(opts.checkpoint_dir.split('-')[-1])
-        opts.data_dir='/data/djl/SF'+str(opts.sf)+'_125K'
+    assert opts.sf != None, 'argument --sf (spreading factor) missing'
 
     opts.n_classes = 2 ** opts.sf
     opts.stft_nfft = opts.n_classes * opts.fs // opts.bw
@@ -74,7 +72,6 @@ if __name__ == "__main__":
     opts.stft_window = opts.n_classes // 2 * opts.stft_mod
     opts.stft_overlap = opts.stft_window // 2 // opts.stft_mod
     opts.conv_dim_lstm = opts.n_classes * opts.fs // opts.bw
-    print('opts.conv_dim_lstm ',opts.conv_dim_lstm )
     opts.freq_size = opts.n_classes
 
     create_dir(opts.checkpoint_dir)
@@ -118,11 +115,11 @@ if __name__ == "__main__":
         mask_CNN = maskCNNModel(opts)
         if opts.cxtoy == 'True': C_XtoY = classificationHybridModel(conv_dim_in=opts.x_image_channel, conv_dim_out=opts.n_classes, conv_dim_lstm= opts.conv_dim_lstm)
     #mask_CNN = nn.DataParallel(mask_CNN)
-    mask_CNN.cuda()
+    if torch.cuda.is_available(): mask_CNN.cuda()
     models = [mask_CNN, ]
     if opts.cxtoy == 'True':
         #C_XtoY = nn.DataParallel(C_XtoY)
-        C_XtoY.cuda()
+        if torch.cuda.is_available(): C_XtoY.cuda()
         models.append(C_XtoY)
     
     opts.logfile = os.path.join(opts.checkpoint_dir, 'logfile-djl-train.txt')

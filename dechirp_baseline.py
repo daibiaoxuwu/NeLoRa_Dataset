@@ -83,5 +83,5 @@ if __name__ == '__main__':
                 symbol_est = round(np.argmax(abs(fft_raw))/opts.debug_upsampling)%opts.n_classes
                 if symbol_est == symbol_idx: ACC[symbol_idx] += 1
                 SUM[symbol_idx] += 1
-                pbar.set_description(str(np.mean(ACC[SUM>0]/SUM[SUM>0])))
+                pbar.set_description(f'{np.mean(ACC[SUM>0]/SUM[SUM>0]):.5f}')
     print('\rSNR:', opts.snr, 'ACC:', str(np.mean(ACC[SUM>0]/SUM[SUM>0])))

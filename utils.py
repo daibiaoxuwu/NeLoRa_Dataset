@@ -9,7 +9,7 @@ def to_var(x):
     """Converts numpy to variable."""
     if torch.cuda.is_available():
         x = x.cuda()
-    return Variable(x)
+    return x
 
 def spec_to_network_input(x, opts):
     assert(x.dtype==torch.cfloat)
@@ -35,7 +35,7 @@ def spec_to_network_input2(x, opts):
 
 def set_gpu(free_gpu_id):
     """Converts numpy to variable."""
-    torch.cuda.set_device(free_gpu_id)
+    if torch.cuda.is_available(): torch.cuda.set_device(free_gpu_id)
 
 
 def to_var(x):

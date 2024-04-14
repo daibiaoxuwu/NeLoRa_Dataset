@@ -5,7 +5,6 @@ from scipy.signal import chirp
 import warnings
 import torch
 import numpy as np
-import cv2
 from utils import *
 import time
 import math
@@ -42,6 +41,7 @@ def merge_images(sources, targets, Y, opts):
 
 
 def save_samples(iteration, fixed_Y, fixed_X, fake_Y, name, opts):
+    return
     """Saves samples from both generators X->Y and Y->X.
     """
     fixed_X = [to_data(i) for i in fixed_X]
@@ -140,7 +140,7 @@ def training_loop(training_dataloader,testing_dataloader, models, opts):
     chirpI1 = chirp(t, f0=opts.bw/2, f1=-opts.bw/2, t1=2** opts.sf / opts.bw , method='linear', phi=90)
     chirpQ1 = chirp(t, f0=opts.bw/2, f1=-opts.bw/2, t1=2** opts.sf / opts.bw, method='linear', phi=0)
     dechirp = chirpI1+1j*chirpQ1
-    downchirp1 = torch.tensor(dechirp, dtype=torch.cfloat).cuda()
+    downchirp1 = to_var(torch.tensor(dechirp, dtype=torch.cfloat))
     downchirp = torch.stack([ downchirp1 for i in range(opts.batch_size)])
 
 

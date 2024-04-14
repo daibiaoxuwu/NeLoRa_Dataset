@@ -22,7 +22,8 @@ class lora_dataset(data.Dataset):
     def load_img(self, path): 
         fid = open(path, 'rb') 
         nelements = self.opts.n_classes * self.opts.fs // self.opts.bw 
-        lora_img = np.fromfile(fid, np.float32, nelements * 2) 
+        lora_img = np.fromfile(fid, np.float32)#, nelements * 2) 
+        assert len(lora_img) == nelements * 2, "file size mismatch, check --sf (spreading factor)."
         lora_img = lora_img[::2] + lora_img[1::2]*1j 
         return torch.tensor(lora_img) 
  
@@ -33,7 +34,7 @@ class lora_dataset(data.Dataset):
                 while(len(self.files[symbol_index]) < 1):  
                     symbol_index = random.randint(0,self.opts.n_classes-1) 
 
-                data_perY = self.load_img(random.choice(self.files[symbol_index])).cuda() 
+                data_perY = self.load_img(random.choice(self.files[symbol_index]))
  
                 data_pers = [] 
 
@@ -60,10 +61,10 @@ class lora_dataset(data.Dataset):
                 time_shift = round(symbol_index / self.opts.n_classes * nsamp)
                 chirp_ideal = torch.tensor(mchirp[time_shift:time_shift+nsamp],dtype=torch.cfloat)
 
-                images_X_spectrum_ideal = torch.stft(input=chirp_ideal,n_fft=self.opts.stft_nfft,win_length =self.opts.stft_nfft//self.opts.stft_mod, hop_length =int(self.opts.stft_nfft/32), return_complex=True).cuda()
+                images_X_spectrum_ideal = to_var(torch.stft(input=chirp_ideal,n_fft=self.opts.stft_nfft,win_length =self.opts.stft_nfft//self.opts.stft_mod, hop_length =int(self.opts.stft_nfft/32), return_complex=True))
                 ideal_symbol = torch.squeeze(spec_to_network_input2( spec_to_network_input(images_X_spectrum_ideal.unsqueeze(0), self.opts), self.opts )).cpu()
 
-                images_X_spectrum_raw = torch.stft(input=chirp_raw,n_fft=self.opts.stft_nfft,win_length =self.opts.stft_nfft//self.opts.stft_mod, hop_length =int(self.opts.stft_nfft/32), return_complex=True).cuda()
+                images_X_spectrum_raw = to_var(torch.stft(input=chirp_raw,n_fft=self.opts.stft_nfft,win_length =self.opts.stft_nfft//self.opts.stft_mod, hop_length =int(self.opts.stft_nfft/32), return_complex=True))
                 fake_symbol = torch.squeeze(spec_to_network_input2( spec_to_network_input(images_X_spectrum_raw.unsqueeze(0), self.opts), self.opts )).cpu()
                 
                 loss = torch.nn.MSELoss(reduction='mean')(torch.abs(ideal_symbol[0]+1j*ideal_symbol[1]), torch.abs(fake_symbol[0]+1j*fake_symbol[1]))
@@ -80,10 +81,10 @@ class lora_dataset(data.Dataset):
                  
                 amp = math.pow(0.1, self.opts.snr/20) 
                 nsamp = self.opts.n_classes * self.opts.fs // self.opts.bw 
-                noise =  torch.tensor(amp / math.sqrt(2) * np.random.randn(nsamp) + 1j * amp / math.sqrt(2) * np.random.randn(nsamp), dtype = torch.cfloat).cuda() 
+                noise = to_var(torch.tensor(amp / math.sqrt(2) * np.random.randn(nsamp) + 1j * amp / math.sqrt(2) * np.random.randn(nsamp), dtype = torch.cfloat))
 
-                data_per = (chirp_raw + noise).cuda()
-                label_per = torch.tensor(symbol_index, dtype=int).cuda() 
+                data_per = to_var(chirp_raw + noise)
+                label_per = to_var(torch.tensor(symbol_index, dtype=int))
  
                 return data_per, label_per, data_perY
             except ValueError as e: 
