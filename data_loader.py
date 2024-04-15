@@ -81,7 +81,7 @@ class lora_dataset(data.Dataset):
                  
                 amp = math.pow(0.1, self.opts.snr/20) 
                 nsamp = self.opts.n_classes * self.opts.fs // self.opts.bw 
-                noise = to_var(torch.tensor(amp / math.sqrt(2) * np.random.randn(nsamp) + 1j * amp / math.sqrt(2) * np.random.randn(nsamp), dtype = torch.cfloat))
+                noise = torch.tensor(amp / math.sqrt(2) * np.random.randn(nsamp) + 1j * amp / math.sqrt(2) * np.random.randn(nsamp), dtype = torch.cfloat)
 
                 data_per = to_var(chirp_raw + noise)
                 label_per = to_var(torch.tensor(symbol_index, dtype=int))
@@ -97,7 +97,9 @@ def lora_loader(opts):
 
     #read filelist
     files = dict(zip(list(range(opts.n_classes)), [[] for i in range(opts.n_classes)])) 
+    assert os.path.exists(opts.data_dir), "--data_dir not found"
     pathfiles = [(filename, os.path.join(root, filename)) for root, dirs, files in os.walk(opts.data_dir) for filename in files if filename[-4:] == '.mat']
+    assert len(pathfiles) >= opts.n_classes, f"insufficient data, please check path"
     for filename, pathfile in pathfiles:
         symbol_idx = int(filename.split('_')[1]) % opts.n_classes 
         files[symbol_idx].append(pathfile)
@@ -109,7 +111,6 @@ def lora_loader(opts):
 
     #debug
     a = [len(files[i]) for i in range(opts.n_classes)] 
-    print('read data: max cnt', max(a), a.index(max(a)), 'min cnt', min(a), a.index(min(a)) )
  
     training_dataset = lora_dataset(opts, dict(zip(list(range(opts.n_classes)), [files[i][:splitpos[i]] for i in range(opts.n_classes)])) ) 
     training_dloader = DataLoader(dataset=training_dataset, batch_size=opts.batch_size, shuffle=False, num_workers=opts.num_workers,  drop_last=True) 
