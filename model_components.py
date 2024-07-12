@@ -1,17 +1,15 @@
-# models.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 
-class classificationHybridModel0(nn.Module):
+class classificationHybridModel(nn.Module):
     """Defines the architecture of the discriminator network.
        Note: Both discriminators D_X and D_Y have the same architecture in this assignment.
     """
 
     def __init__(self, conv_dim_in=2, conv_dim_out=128, conv_dim_lstm=1024):
-        super(classificationHybridModel0, self).__init__()
+        super(classificationHybridModel, self).__init__()
 
         self.out_size = conv_dim_out
         self.conv1 = nn.Conv2d(conv_dim_in, 16, (3, 3), stride=(2, 2), padding=(1, 1))
@@ -28,7 +26,7 @@ class classificationHybridModel0(nn.Module):
     def forward(self, x):
         out = self.act(self.conv1(x))
         out = self.pool1(out)
-        out = out.reshape(out.size(0), -1)
+        out = out.view(out.size(0), -1)
 
         out = self.act(self.dense(out))
         out = self.drop2(out)
@@ -39,15 +37,14 @@ class classificationHybridModel0(nn.Module):
         return out
 
 
-class maskCNNModel0(nn.Module):
-    def __init__(self, opts):
-        super(maskCNNModel0, self).__init__()
-        self.opts = opts
+class maskCNNModel(nn.Module):
+    def __init__(self, conv_dim_lstm, lstm_dim, fc1_dim, freq_size):
+        super(maskCNNModel, self).__init__()
 
         self.conv = nn.Sequential(
             # cnn1
             nn.ZeroPad2d((3, 3, 0, 0)),
-            nn.Conv2d(opts.x_image_channel, 64, kernel_size=(1, 7), dilation=(1, 1)),
+            nn.Conv2d(2, 64, kernel_size=(1, 7), dilation=(1, 1)),
             nn.BatchNorm2d(64), nn.ReLU(),
 
             # cnn2
@@ -87,27 +84,27 @@ class maskCNNModel0(nn.Module):
         )
 
         self.lstm = nn.LSTM(
-            opts.conv_dim_lstm,
-            opts.lstm_dim,
+            conv_dim_lstm,
+            lstm_dim,
             batch_first=True,
             bidirectional=True)
 
-        self.fc1 = nn.Linear(2 * opts.lstm_dim, opts.fc1_dim)
-        self.fc2 = nn.Linear(opts.fc1_dim, opts.freq_size * opts.out_channel)
+        self.fc1 = nn.Linear(2 * lstm_dim, fc1_dim)
+        self.fc2 = nn.Linear(fc1_dim, freq_size * 2)
 
     def forward(self, x):
         out = x.transpose(2, 3).contiguous()
         out = self.conv(out)
         out = out.transpose(1, 2).contiguous()
-        out = out.reshape(out.size(0), out.size(1), -1)
+        out = out.view(out.size(0), out.size(1), -1)
         out, _ = self.lstm(out)
         out = F.relu(out)
         out = self.fc1(out)
         out = F.relu(out)
         out = self.fc2(out)
 
-        out = out.reshape(out.size(0), out.size(1), self.opts.out_channel, -1)
-        out = torch.sigmoid(out) #sigmoid or tanh
+        out = out.view(out.size(0), out.size(1), 2, -1)
+        out = torch.sigmoid(out)
         out = out.transpose(1, 2).contiguous()
         out = out.transpose(2, 3).contiguous()
         masked = out * x  # out is mask, masked is denoised

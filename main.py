@@ -1,134 +1,286 @@
-"""Main script for project."""
-from __future__ import print_function
-import config
-import data_loader
-import end2end
 import os
-import numpy as np
+import math
+import random
+
 import torch
-import sys
-from model_components0 import maskCNNModel0, classificationHybridModel0
-from utils import *
-import collections
+import numpy as np
+from scipy.signal import chirp
+from scipy.fft import fft
+from torch.utils.data import DataLoader, TensorDataset, random_split, WeightedRandomSampler
+from tqdm import tqdm
+import pickle
+import matplotlib.pyplot as plt
 
-def load_checkpoint(opts, maskCNNModel, classificationHybridModel):
-    maskCNN_path = os.path.join(opts.load_checkpoint_dir, str(opts.load_iters) + '_maskCNN.pkl')
+from model_components import maskCNNModel, classificationHybridModel
 
-    C_XtoY_path = os.path.join(opts.load_checkpoint_dir, str(opts.load_iters) + '_C_XtoY.pkl')
-    print('LOAD MODEL:', maskCNN_path)
+np.random.seed(10)
+random.seed(10)
 
-    maskCNN = maskCNNModel(opts)
-    if opts.load_maskcnn == 'True':
-        state_dict = torch.load(maskCNN_path, map_location=lambda storage, loc: storage)
-        for key in list(state_dict.keys()): state_dict[key.replace('module.', '')] = state_dict.pop(key)
-        #state_dict['conv2.1.weight']= torch.cat((state_dict['conv2.1.weight'], torch.zeros(64,258-130,5,5)),1)
-        #state_dict['fc1.weight']= state_dict['fc1.weight'][:, :4096]
-        #state_dict.pop('fc2.weight')
-        #state_dict.pop('fc2.bias')
-        maskCNN.load_state_dict(state_dict)#, strict=False)
+# parameters
+sf = 7  # spreading factor
+bw = 125e3  # bandwidth
+fs = 1e6  # sampling frequency
+data_dir = f'/path/to/NeLoRa_Dataset/{sf}/'  # directory for training dataset
+mask_CNN_load_path = f'checkpoint/sf{sf}/100000_maskCNN.pkl'  # path for loading mask_CNN model weights
+C_XtoY_load_path = f'checkpoint/sf{sf}/100000_C_XtoY.pkl'  # path for loading mask_CNN model weights
+save_ckpt_dir = 'ckpt'  # directory for saving trained weight checkpoints
+normalization = True  # whether to perform normalization on data
+snr_range = list(range(-30, 1))  # range of SNR for training
+test_snr = -17  # SNR for testing
+batch_size = 16  # batch size (the larger, the better, depending on GPU memory)
+scaling_for_imaging_loss = 128  # scaling of losses between mask_CNN and C_XtoY
+ckpt_per_iter = 1000  # checkpoint per iteration
+train_epochs = 1  # how many epochs to train (the larger, the better, network will not overfit)
 
-    if opts.cxtoy == 'True':
-        C_XtoY = classificationHybridModel(conv_dim_in=opts.x_image_channel, conv_dim_out=opts.n_classes, conv_dim_lstm=opts.conv_dim_lstm)
-        if opts.load_cxtoy == 'True' and os.path.exists(C_XtoY_path):
-            state_dict = torch.load( C_XtoY_path, map_location=lambda storage, loc: storage)
-            if type(state_dict)==collections.OrderedDict:
-                for key in list(state_dict.keys()): state_dict[key.replace('module.', '')] = state_dict.pop(key)
-                #state_dict['dense.weight']= state_dict['dense.weight'][:,:state_dict['dense.weight'].shape[1]//opts.stack_imgs ]
-                C_XtoY.load_state_dict(state_dict)#, strict=False)
-            else:
-                C_XtoY = torch.load(C_XtoY_path)
-                
-        return [maskCNN, C_XtoY]
-    else: return [maskCNN, ]
+# make directory for saving trained weight checkpoints
+if not os.path.exists(save_ckpt_dir):
+    os.mkdir(save_ckpt_dir)
+
+# constants
+num_classes = 2 ** sf  # number of codes per symbol == 2 ** sf
+num_samples = int(num_classes * fs / bw)  # number of samples per symbol
+
+# define models
+mask_CNN = maskCNNModel(conv_dim_lstm=num_samples, lstm_dim=400, fc1_dim=600, freq_size=num_classes)
+C_XtoY = classificationHybridModel(conv_dim_in=2, conv_dim_out=num_classes, conv_dim_lstm=num_samples)
+
+# load models (remove if train from scratch)
+mask_CNN.load_state_dict(torch.load(mask_CNN_load_path, map_location=lambda storage, loc: storage), strict=True)
+C_XtoY.load_state_dict(torch.load(C_XtoY_load_path, map_location=lambda storage, loc: storage), strict=True)
+
+# load models to GPU
+mask_CNN
+C_XtoY
+
+# generate downchirp
+t = np.linspace(0, num_samples / fs, num_samples + 1)[:-1]
+chirpI1 = chirp(t, f0=bw / 2, f1=-bw / 2, t1=2 ** sf / bw, method='linear', phi=90)
+chirpQ1 = chirp(t, f0=bw / 2, f1=-bw / 2, t1=2 ** sf / bw, method='linear', phi=0)
+downchirp = chirpI1 + 1j * chirpQ1
 
 
-def main(opts,models):
-    if torch.cuda.is_available(): torch.cuda.empty_cache()
+# decoding symbols using loraphy, as baseline method
+# note: this method only works with upsampling (FS >= BW*2)
+def decode_loraphy(data_in, num_classes, downchirp):
+    upsampling = 100  # up-sampling rate for loraphy, default 100
+    # upsamping can counter possible frequency misalignments, finding the highest position of the signal peak, but higher upsampling lead to more noise
 
-    # Create train and test dataloaders for images from the two domains X and Y
-    training_dataloader, testing_dataloader = data_loader.lora_loader(opts)
-    # Create checkpoint directories
+    # dechirp
+    chirp_data = data_in * downchirp
 
-    # Start training
-    set_gpu(opts.free_gpu_id)
+    # compute FFT
+    fft_raw = fft(chirp_data, len(chirp_data) * upsampling)
 
-    # start training
-    models = end2end.training_loop(training_dataloader,testing_dataloader,models, opts)
-    return models
+    # cut the FFt results to two (due to upsampling)
+    target_nfft = num_classes * upsampling
+    cut1 = np.array(fft_raw[:target_nfft])
+    cut2 = np.array(fft_raw[-target_nfft:])
 
-if __name__ == "__main__":
-    print('=' * 80)
-    print('Opts'.center(80))
-    print('-' * 80)
-    print('COMMAND:    ', ' '.join(sys.argv))
-    parser = config.create_parser()
-    opts = parser.parse_args()
+    # add absolute values of cut1 and cut2 to merge two peaks into one
+    return round(np.argmax(abs(cut1) + abs(cut2)) / upsampling) % num_classes
 
-    assert opts.sf != None, 'argument --sf (spreading factor) missing'
 
-    opts.n_classes = 2 ** opts.sf
-    opts.stft_nfft = opts.n_classes * opts.fs // opts.bw
+# decoding symbols using our model for training and testing
+def perform_stft(data_in):
+    stft_full_img = torch.stft(input=data_in, n_fft=num_samples,
+                               hop_length=num_classes // 4, win_length=num_classes // 2, pad_mode='constant',
+                               return_complex=True)
 
-    opts.stft_window = opts.n_classes // 2 * opts.stft_mod
-    opts.stft_overlap = opts.stft_window // 2 // opts.stft_mod
-    opts.conv_dim_lstm = opts.n_classes * opts.fs // opts.bw
-    opts.freq_size = opts.n_classes
+    # up-down concatenation, to remove blank spaces due to oversampling
+    # (the image is originally fs bandwidth (height: num_samples), we only need bw bandwidth (height: num_classes))
+    stft_img = torch.concat((stft_full_img[:, -num_classes // 2:, :], stft_full_img[:, 0:num_classes // 2, :]), axis=1)
 
-    create_dir(opts.checkpoint_dir)
+    # complex numbers -> 2 channels of real numbers
+    return torch.stack((stft_img.real, stft_img.imag), 1)  # y.shape: batch_size, 2, height(num_classes), width
 
+
+def decode_model(input_img):
+    # run mask_CNN to generate a masked image
+    mask_Y = mask_CNN(input_img)
+
+    # classification
+    outputs = C_XtoY(mask_Y)
+
+    # return masked image, the prediction output, and the stft image
+    return mask_Y, outputs
+
+
+# adding noise for data
+def add_noise(data_in, snr):
+    # load data. dataY: data without noise
+    dataY, truth_idx = data_in
+    # add noise of a certain SNR, chosen from snr_range
+    amp = math.pow(0.1, snr / 20) * torch.mean(torch.abs(dataY))
+    noise = (amp / math.sqrt(2) * np.random.randn(num_samples) + 1j * amp / math.sqrt(2) * np.random.randn(
+        num_samples)).type(torch.cfloat)
+    dataX = dataY + noise  # dataX: data with noise
+    if normalization:
+        dataX = dataX / torch.mean(torch.abs(dataX)) # normalization
+    return dataX, dataY, truth_idx
+
+# load the whole dataset
+def load_data():
+        
+    # read all file paths
+    files = [[] for i in range(num_classes)]
+    for subfolder in os.listdir(data_dir):
+        for filename in os.listdir(os.path.join(data_dir, subfolder)):
+            truth_idx = int(filename.split('_')[1])
+            files[truth_idx].append(os.path.join(data_dir, subfolder, filename))
+
+    # read file contents
+    datax = []  # chirp symbols
+    datay = []  # truth indexes for each symbol
+    for truth_idx, filelist in tqdm(enumerate(files), desc = 'Reading Files'):
+        for filepath in filelist:
+            with open(filepath, 'rb') as fid:
+                # read file
+                chirp_raw = np.fromfile(fid, np.complex64, num_samples)
+                assert len(chirp_raw) == num_samples
+                # check if code is correct
+                if decode_loraphy(chirp_raw, num_classes, downchirp) == truth_idx:
+                    # append data
+                    datax.append(torch.tensor(chirp_raw, dtype=torch.cfloat))
+                    datay.append(truth_idx)
+
+    return datax, datay
+
+
+# train main function
+def train():
+
+    # create TensorDataset
+    datax, datay = load_data()
+    data = TensorDataset(torch.stack(datax), torch.tensor(datay, dtype=torch.long))
+   
+# Calculate class weights for imbalanced datasets
+    class_counts = torch.bincount(torch.tensor(datay))
+    class_weights = 1. / class_counts.float()
+    sample_weights = class_weights[torch.tensor(datay)]
+
+# Split the dataset into 9:1 ratio
+    train_size = int(0.9 * len(data))
+    test_size = len(data) - train_size
+    train_dataset, test_dataset = random_split(data, [train_size, test_size])
+
+# Create samplers for weighted sampling
+    train_weights = sample_weights[train_dataset.indices]
+    test_weights = sample_weights[test_dataset.indices]
+
+    train_sampler = WeightedRandomSampler(weights=train_weights, num_samples=len(train_weights), replacement=True)
+    test_sampler = WeightedRandomSampler(weights=test_weights, num_samples=len(test_weights), replacement=True)
+
+# Create DataLoaders
+    training_loader = DataLoader(train_dataset, batch_size=batch_size, sampler=train_sampler)
+    testing_loader = DataLoader(test_dataset, batch_size=batch_size, sampler=test_sampler)
+
+    print(f'Len Training {len(training_loader)} Testing {len(testing_loader)}')
+
+    # initiate training
+    g_params = list(mask_CNN.parameters()) + list(C_XtoY.parameters())
+    g_optimizer = torch.optim.Adam(g_params, 0.0001, [0.5, 0.999])
+    loss_spec = torch.nn.MSELoss(reduction='mean')
+    loss_class = torch.nn.CrossEntropyLoss()
+
+    # main training loop
+    for epoch in range(train_epochs):
+        for iteration, data_train in tqdm(enumerate(training_loader), desc=f'Training {epoch=}'):
+
+            dataX, dataY, truth_idx = add_noise(data_train, random.choice(snr_range))
+
+            # perform stft
+            input_img = perform_stft(dataX)
+            truth_img = perform_stft(dataY)
+
+            # decode dataX with model
+            output_img, est_train = decode_model(input_img)
+
+            # compute loss
+            g_y_pix_loss = loss_spec(output_img, truth_img)
+            g_y_class_loss = loss_class(est_train, truth_idx)
+
+            # add up loss with scaling_for_imaging_loss, and back porpagation
+            g_optimizer.zero_grad()
+            G_Y_loss = scaling_for_imaging_loss * g_y_pix_loss + g_y_class_loss
+            G_Y_loss.backward()
+            g_optimizer.step()
+
+            # checkpoint and test
+            if iteration % ckpt_per_iter == 0:
+
+                # checkpoint
+                torch.save(mask_CNN.state_dict(), os.path.join(save_ckpt_dir, str(iteration) + '_maskCNN.pkl'))
+                torch.save(C_XtoY.state_dict(), os.path.join(save_ckpt_dir, str(iteration) + '_C_XtoY.pkl'))
+
+                # test
+                with torch.no_grad():
+                    mask_CNN.eval()
+                    C_XtoY.eval()
+
+                    # correct count
+                    correct_count = 0
+                    for data_test in testing_loader:
+                        dataX_test, dataY_test, truth_test = add_noise(data_test, test_snr)
+
+                        # perform stft
+                        input_img = perform_stft(dataX_test)
+
+                        # run model testing
+                        _, est_test = decode_model(input_img)
+
+                        est_code = torch.max(est_test, 1)[1].cpu()
+                        correct_count += torch.sum(est_code == truth_test)
+
+                    print('SNR: %d TEST ACC: %.3f' % (test_snr, correct_count / (len(testing_loader) * batch_size)))
+                    mask_CNN.train()
+                    C_XtoY.train()
+
+# Test main function
+def test():
+    acc = np.zeros((2, len(snr_range),num_classes,))
+    cnt = np.zeros((len(snr_range),num_classes,))
+    datax, datay = load_data()
+    data = TensorDataset(torch.stack(datax), torch.tensor(datay, dtype=torch.long))
+    all_dataloader = DataLoader(data, batch_size=batch_size)
+    for epoch in range(train_epochs):
+        for data_test in tqdm(all_dataloader):
+            for snridx, snr in enumerate(snr_range):
+
+                dataX_test, dataY_test, truth_test = add_noise(data_test, snr)
+
+                est_loraphy = torch.tensor([decode_loraphy(dataX, num_classes, downchirp) for dataX in dataX_test.numpy()])
+                input_img = perform_stft(dataX_test)
+                _, est_test = decode_model(input_img)
+                est_code = (opts.n_classes - torch.max(est_test, 1)[1].cpu()) % opts.n_classes
+                acc[0][snridx][truth_test] += torch.sum(est_loraphy == truth_test).item()
+                acc[1][snridx][truth_test] += torch.sum(est_code == truth_test).item()
+                cnt[snridx][truth_test] += truth_test.shape[0]
+
+    # save testing data
+    with open(f'test_sf{sf}.pkl', 'wb') as g:
+        pickle.dump((acc, cnt), g)
+
+    # Plot
+    plt.axhline(y=0.9, linestyle='--', color='black')
+    plt.xlabel('SNR (dB)')
+    plt.ylabel('Accuracy')
+
+    for pidx, label in enumerate(['LoRaPHY', 'NeLoRa']):
+        with np.errstate(divide='ignore', invalid='ignore'):
+            div_result = np.where(cnt != 0, acc[pidx] / cnt, np.nan)
+        res = np.nanmean(div_result, axis=1)
+        plt.plot(snr_range, res, label=label)
+
+    plt.legend()
+    plt.savefig(f'test_sf{sf}.pdf')
+    plt.clf()
     
-    if opts.lr == -1:
-        opts.lr = 0.001
-        if min(opts.snr) < -15: opts.lr *= 0.3
-        if min(opts.snr) < -20: opts.lr /= 1.5
-    if opts.w_image == -1:
-        opts.w_image = 1
-        if min(opts.snr) < -15: opts.w_image *= 4
-        if min(opts.snr) < -20: opts.w_image *= 4
-
-
-    #default checkpoint dir
-    if opts.load_checkpoint_dir == '/data/djl': opts.load_checkpoint_dir = opts.checkpoint_dir
-
     
-    maskCNNModel = maskCNNModel0
-    classificationHybridModel = classificationHybridModel0
+if __name__ == '__main__':
+    train()  # For training
+    # test()  # For testing    
 
-    if opts.load == 'yes':
-        if opts.load_iters == -1:
-            vals = [int(fname.split('_')[0]) for fname in os.listdir(opts.load_checkpoint_dir) if fname[-4:] == '.pkl']
-            if len(vals)==0 or max(vals) == 0: 
-                opts.load = 'no'
-                print('--WARNING: CHECKPOINT_DIR NOT EXIST, SETTING OPTS.LOAD TO NO--')
-            else: opts.load_iters = max(vals)
-    codepath = os.path.join(opts.checkpoint_dir, 'code'+str(opts.load_iters))
-    create_dir(codepath)
-    os.system('cp '+ os.path.dirname(os.path.abspath(__file__))+r'/*.py '+codepath)
-    
 
-    if opts.load == 'yes':
-        print('LOAD ITER:  ',opts.load_iters)
-        models = load_checkpoint(opts, maskCNNModel, classificationHybridModel)
-        mask_CNN = models[0]
-        if opts.cxtoy == 'True': C_XtoY = models[1]
-    else:
-        mask_CNN = maskCNNModel(opts)
-        if opts.cxtoy == 'True': C_XtoY = classificationHybridModel(conv_dim_in=opts.x_image_channel, conv_dim_out=opts.n_classes, conv_dim_lstm= opts.conv_dim_lstm)
-    #mask_CNN = nn.DataParallel(mask_CNN)
-    if torch.cuda.is_available(): mask_CNN.cuda()
-    models = [mask_CNN, ]
-    if opts.cxtoy == 'True':
-        #C_XtoY = nn.DataParallel(C_XtoY)
-        if torch.cuda.is_available(): C_XtoY.cuda()
-        models.append(C_XtoY)
-    
-    opts.logfile = os.path.join(opts.checkpoint_dir, 'logfile-djl-train.txt')
-    opts.logfile2 = os.path.join(opts.checkpoint_dir, 'logfile2-djl-train.txt')
-    strlist = print_opts(opts)
-    with open(opts.logfile,'a') as f: f.write('\n'+' '.join(sys.argv))
-    with open(opts.logfile,'a') as f: f.write('\n'+str(datetime.now().strftime("%Y-%m-%d %H:%M:%S")) + ' ' +'\n'.join(strlist)+'\n')
-    with open(opts.logfile2,'a') as f: f.write(str(datetime.now().strftime("%Y-%m-%d %H:%M:%S")) + ' snr ' +str(opts.snr)+' : ')
-    opts.init_train_iter = opts.load_iters
-    models = main(opts,models)
-    opts.init_train_iter += opts.train_iters
+
+
 
