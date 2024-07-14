@@ -1,6 +1,6 @@
 # NELoRa-Bench
 This folder provides the neural-based LoRa demodulation code for our ICLR 2023 workshop paper: [NELoRa-Bench: A Benchmark for Neural-enhanced LoRa Demodulation](https://doi.org/10.48550/arXiv.2305.01573)
-If the dataset and checkpoint are not downloadable due to git LFS bandwidth usage, they can be accessed at this [Google Drive link](https://drive.google.com/drive/folders/12o3kqfBGrWG2YWegBa-sqErpAUsmLIOO)
+The dataset and checkpoint can be accessed at this [Google Drive link](https://drive.google.com/drive/folders/12o3kqfBGrWG2YWegBa-sqErpAUsmLIOO)
 
 This code reproduces the experiments in the SenSys '21 paper "[NELoRa: Towards Ultra-low SNR LoRa Communication with Neural-enhanced Demodulation](https://cse.msu.edu/~caozc/papers/sensys21-li.pdf)".
 
@@ -8,7 +8,7 @@ Differences from the original [code provided by NELoRa](https://github.com/hanqi
 1. Now for both nelora and baseline train/test, no need for a separate stage of data-generation (adding artificial noise). Noise is added on-the-fly. This reduces overfitting issues and removes the need for additional harddisk space, also speeding up the process drastically.
 2. Added data balancing.
 3. Removed clutter.
-4. Parameters are hardcoded.
+4. Parameters are partially hardcoded.
 5. Add a double check on the dataset for wrong codes.
 6. Add comparison with baseline methods, using LoRaPhy from [From Demodulation to Decoding: Toward Complete LoRa PHY Understanding and Implementation](https://doi.org/10.1145/3546869)
 
@@ -18,28 +18,37 @@ Usage:
 3. Adjust the parameters in main.py:
 ```python
 # parameters
-sf = 8  # spreading factor
+parser = argparse.ArgumentParser() 
+parser.add_argument('--sf', type=int, help='The spreading factor.') 
+parser.add_argument('--batch_size', type=int, default=16, help='The batch size.') 
+opts = parser.parse_args()
+sf = opts.sf  # spreading factor
+batch_size = opts.batch_size  # batch size (the larger, the better, depending on GPU memory)
+
 bw = 125e3  # bandwidth
 fs = 1e6  # sampling frequency
 data_dir = f'/path/to/NeLoRa_Dataset/{sf}/'  # directory for training dataset
 mask_CNN_load_path = f'checkpoint/sf{sf}/100000_maskCNN.pkl'  # path for loading mask_CNN model weights
-C_XtoY_load_path = f'checkpoint/sf{sf}/100000_C_XtoY.pkl'  # path for loading C_XtoY model weights
+C_XtoY_load_path = f'checkpoint/sf{sf}/100000_C_XtoY.pkl'  # path for loading mask_CNN model weights
 save_ckpt_dir = 'ckpt'  # directory for saving trained weight checkpoints
-normalization = False  # whether to perform normalization on data
+normalization = True  # whether to perform normalization on data
 snr_range = list(range(-30, 1))  # range of SNR for training
-test_snr = -22  # SNR for testing
-batch_size = 16  # batch size (the larger, the better, depending on GPU memory)
+test_snr = -17  # SNR for testing
 scaling_for_imaging_loss = 128  # scaling of losses between mask_CNN and C_XtoY
 ckpt_per_iter = 1000  # checkpoint per iteration
-train_epochs = 1  # how many epochs to train (the larger, the better, network will not overfit)
+train_epochs = 100  # how many epochs to train (the larger, the better, network will not overfit)
 ```
-3. For training, call train(). For testing, call test().
+4. For training, call train(). For testing, call test(). 
 ```python
 if __name__ == '__main__':
     train()
     # test()    
 ```
-4. please consider to cite our paper if you use the code or data in your research project.
+5. Run main.py with appropriate prameters, e.g.:
+```bash
+python main.py --sf 7 --batch_size 128
+```
+6. please consider to cite our paper if you use the code or data in your research project.
 ```bibtex
   @inproceedings{nelora2021sensys,
   	title={{NELoRa: Towards Ultra-low SNR LoRa Communication with Neural-enhanced Demodulation}},
