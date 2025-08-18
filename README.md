@@ -38,7 +38,7 @@ scaling_for_imaging_loss = 128  # scaling of losses between mask_CNN and C_XtoY
 ckpt_per_iter = 1000  # checkpoint per iteration
 train_epochs = 100  # how many epochs to train (the larger, the better, network will not overfit)
 ```
-4. For training, call train(). For testing, call test(). 
+4. For training, call train(). For testing, call test(). test() is run on the whole dataset; Please manually split the datasets and specify another folder if testing is needed. Remember to delete the load cache ("pkl_{sf}.pkl") when switching datasets.
 ```python
 if __name__ == '__main__':
     train()
